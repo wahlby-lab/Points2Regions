@@ -2,6 +2,12 @@
 __pycache__/
 *.py[cod]
 *$py.class
+tissuumaps/Points2Regions_works.js
+tissuumaps/tmap_test.ipynb
+tissuumaps/toy_data.csv
+tissuumaps/build
+tests.py
+
 
 # C extensions
 *.so
