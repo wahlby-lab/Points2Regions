@@ -625,6 +625,7 @@ class Points2Regions:
         for datasetid, result in self._results.items():
             geojson = self._labelmask2geojson(result, region_name='My regions', colors=self._colors)
             geojsons[datasetid] = geojson
+    
         if len(geojsons) == 1:
             return geojsons[datasetid]
         return geojsons
