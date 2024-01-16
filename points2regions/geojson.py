@@ -67,9 +67,9 @@ def binarymask2polygon(binary_mask: np.ndarray, tolerance: float=0, offset: floa
     )
     contours = find_contours(padded_binary_mask, 0.5)
     contours = [c-1 for c in contours]
-    #contours = np.subtract(contours, 1)
     for contour in contours:
         contour = approximate_polygon(contour, tolerance)
+        contour = np.fliplr(contour) # yx instead of x
         if len(contour) < 3:
             continue
         contour = contour / 3
@@ -78,7 +78,6 @@ def binarymask2polygon(binary_mask: np.ndarray, tolerance: float=0, offset: floa
             contour = contour * scale
         if offset is not None:
             contour = contour + offset  # .ravel().tolist()
-
         # after padding and subtracting 1 we may get -0.5 points in our segmentation
         polygons.append(contour.tolist())
 
@@ -91,11 +90,12 @@ def labelmask2geojson(
     region_name:str="My regions",
     scale:float=1.0,
     offset:float = 0,
+    min_area=0,
     colors=None
 ):
     from skimage.measure import regionprops
 
-    nclusters = np.max(labelmask)
+    nclusters = np.max(labelmask)+1
     if colors is None:
         colors = [COLORS[k % len(COLORS)] for k in range(nclusters)]
     if isinstance(colors, np.ndarray):
@@ -108,13 +108,17 @@ def labelmask2geojson(
     cc = []
     for index, region in enumerate(props):
         # take regions with large enough areas
-        contours = binarymask2polygon(
-            region.image,
-            offset=scale*np.array(region.bbox[0:2]) + offset,
-            scale=scale
-        )
-        cc.append(colors[region.label-1])
-        polygons.append(contours)
+        if region.area > min_area:
+            offset_yx = scale*np.flip(np.array(region.bbox[0:2])) + offset
+            contours = binarymask2polygon(
+                region.image,
+                offset=offset_yx,
+                scale=scale
+            )
+            cc.append(colors[region.label-1])
+
+
+            polygons.append(contours)
     json = polygons2json(polygons, region_name, cluster_names, colors=cc)
     return json
 

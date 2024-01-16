@@ -155,7 +155,8 @@ class Points2Regions:
                             - `num_components` is an integer indicating the number of unique connected
                                 components.
                         The optional parameter, `grow`, can be used to grow the size of the label mask.
-                        The optional parameter, `min_area`, can be used to remove small connected components. 
+                        The optional parameter, `min_area`, can be used to remove small connected components in the geojson polygons
+                            or in the connected component label mask. 
                                 
     
             seed : int, optional
@@ -224,8 +225,9 @@ class Points2Regions:
                         - `num_components` is an integer indicating the number of unique connected
                             components.
                     The optional parameter, `grow`, can be used to grow the size of the label mask.
-                    The optional parameter, `min_area`, can be used to remove small connected components. 
-                            
+                    The optional parameter, `min_area`, can be used to remove small connected components in the geojson polygons
+                        or in the connected component label mask. 
+                                                        
  
         seed : int, optional
             Random seed for clustering.
@@ -248,7 +250,7 @@ class Points2Regions:
         elif output == 'anndata':
             return self.get_anndata(cluster_key_added=adata_cluster_key)
         elif output == 'geojson':
-            return self.get_geojson()
+            return self.get_geojson(grow=grow, min_area=min_area)
         elif output == 'colors':
             return self.get_cluster_colors(hex=True)
         elif output == 'connected':
@@ -482,7 +484,7 @@ class Points2Regions:
             
             # Create label mask
             clusters = result['cluster_per_pixel']
-            label_mask = np.zeros(grid_props['grid_size'], dtype='uint8')
+            label_mask = np.zeros(grid_props['grid_size'], dtype='int')
             label_mask[tuple(ind for ind in grid_props['grid_coords'])] = clusters + 1
 
             # Upscale the mask to match data
@@ -495,7 +497,7 @@ class Points2Regions:
             for datasetid, (mask, T) in masks.items():
 
                     # Mask foreground from background
-                    binary_mask = mask != 0
+                    binary_mask = mask != -1
 
                     # Compute distance from each background pixel to foreground
                     distances = edt(~binary_mask)
@@ -510,9 +512,9 @@ class Points2Regions:
                     mask[yx_bg[:,0], yx_bg[:,1]] = mask[yx_fg[ind,0], yx_fg[ind,1]]
 
                     # Erode to remove over-bluring near borders
-                    binary_mask = mask != 0
+                    binary_mask = mask != -1
                     binary_mask = binary_erosion(binary_mask, iterations=int(grow), border_value=1)
-                    mask[~binary_mask] = 0
+                    mask[~binary_mask] = -1
                     masks[datasetid] = (mask, T)
 
         if len(self._results.keys()) == 1:
@@ -612,23 +614,34 @@ class Points2Regions:
         adata.uns['reads'] = reads
         return adata
 
-    def get_geojson(self) -> Union[Dict, List]:
+    def get_geojson(self, grow:int=None, min_area:int=0) -> Union[Dict, List]:
         """
         Generates GeoJSON representation of the regions.
+
+        
+
+        Parameters
+        ----------
+        gorw : int
+            The optional parameter, `grow`, can be used to grow the size of the label mask
+            with this many pixels. Default 0.
 
         Returns
         -------
         Union[Dict, List]
             GeoJSON data.
         """
-        geojsons = {}
-        for datasetid, result in self._results.items():
-            geojson = self._labelmask2geojson(result, region_name='My regions', colors=self._colors)
-            geojsons[datasetid] = geojson
-    
-        if len(geojsons) == 1:
-            return geojsons[datasetid]
-        return geojsons
+
+        # Get label mask and transformations
+        if len(self._results) == 1:
+            label_mask, tform = self.get_labelmask(grow=grow)
+            geojson = labelmask2geojson(label_mask, scale=1.0 / tform[0], offset=-tform[1]/tform[0], min_area=min_area)
+        else:
+            geojson = {}
+            for datasetid, (label_mask, tform) in self.get_labelmask(grow=grow):
+                geojson[datasetid] = labelmask2geojson(label_mask, scale=1.0 / tform[0], offset=-tform[1]/tform[0], min_area=min_area)
+
+        return geojson
 
     def get_clusters_per_marker(self) -> np.ndarray:
         """
@@ -652,13 +665,6 @@ class Points2Regions:
         else:
             return np.ones(len(self._xy), dtype='bool')
 
-    def _labelmask2geojson(self, result, region_name, colors):
-        grid_props = result['grid_props']
-        clusters = result['cluster_per_pixel']
-        label_mask = np.zeros(grid_props['grid_size'], dtype='uint8')
-        label_mask[tuple(ind for ind in grid_props['grid_coords'])] = clusters
-        geojson = labelmask2geojson(label_mask, region_name=region_name, scale=1.0/grid_props['grid_scale'], offset=grid_props['grid_offset'], colors=colors)
-        return geojson
 
 
     def _get_connected_components(self, label_mask_result: Union[Dict[str, Tuple[np.ndarray, np.ndarray]], Tuple[np.ndarray, np.ndarray]], min_area:int=1) -> Tuple[np.ndarray, int]:
