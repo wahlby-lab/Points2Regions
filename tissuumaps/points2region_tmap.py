@@ -1,3 +1,433 @@
+import numpy as np
+import scipy.sparse as sp
+from sklearn.neighbors import kneighbors_graph, radius_neighbors_graph
+from sklearn.preprocessing import normalize
+from typing import Optional
+
+def connectivity_matrix(
+    xy: np.ndarray,
+    method="knn",
+    k: int = 5,
+    r: Optional[float] = None,
+    include_self: bool = False,
+) -> sp.spmatrix:
+    """
+    Compute the connectivity matrix of a dataset based on either k-NN or radius search.
+
+    Parameters
+    ----------
+    xy : np.ndarray
+        The input dataset, where each row is a sample point.
+    method : str, optional (default='knn')
+        The method to use for computing the connectivity.
+        Can be either 'knn' for k-nearest-neighbors or 'radius' for radius search.
+    k : int, optional (default=5)
+        The number of nearest neighbors to use when method='knn'.
+    r : float, optional (default=None)
+        The radius to use when method='radius'.
+    include_self : bool, optional (default=False)
+        If the matrix should contain self connectivities.
+
+    Returns
+    -------
+    A : sp.spmatrix
+        The connectivity matrix, with ones in the positions where two points are
+            connected.
+    """
+    if method == "knn":
+        A = kneighbors_graph(xy, k, include_self=include_self).astype('bool')
+    else:
+        A = radius_neighbors_graph(xy, r, include_self=include_self).astype('bool')
+    return A
+
+def attribute_matrix(
+    cat: np.ndarray,
+    unique_labels=None
+):
+    """
+    Compute the attribute matrix from categorical data, based on one-hot encoding.
+
+    Parameters
+    ----------
+    cat : np.ndarray
+        The categorical data, where each row is a sample and each column is a feature.
+    unique_cat : np.ndarray
+        Unique categorical data used to setup up the encoder. If "auto", unique
+        categories are automatically determined from cat.
+
+    Returns
+    -------
+    y : sp.spmatrix
+        The attribute matrix, in sparse one-hot encoding format.
+    categories : list
+        The categories present in the data, as determined by the encoder.
+    """
+    if unique_labels is None:
+        categories, col_ind = np.unique(cat, return_inverse=True)
+    else:
+        categories = unique_labels
+        map_to_ind = {u : i for i,u in enumerate(categories)}
+        col_ind = np.array([map_to_ind[i] for i in cat])
+
+    row_ind = np.arange(len(cat))
+    shape = (len(cat), len(categories))
+    val = np.ones(len(cat), dtype=bool)
+    y = sp.csr_matrix((val,(row_ind, col_ind)), shape=shape, dtype=bool)
+    return y, categories
+
+def spatial_binning_matrix(
+    xy: np.ndarray, bin_width: float, return_grid_props: bool = False
+) -> sp.spmatrix:
+
+
+    # Compute shifted coordinates
+    mi, ma = xy.min(axis=0, keepdims=True), xy.max(axis=0, keepdims=True)
+    xys = xy - mi
+
+    # Compute grid size
+    grid = ma - mi
+    grid = grid.flatten()
+
+    # Compute bin index
+    bin_ids = xys // bin_width
+    bin_ids = bin_ids.astype("int")
+    bin_ids = tuple(x for x in bin_ids.T)
+
+    # Compute grid size in indices
+    size = grid // bin_width + 1
+    size = tuple(x for x in size.astype("int"))
+
+    # Convert bin_ids to integers
+    linear_ind = np.ravel_multi_index(bin_ids, size)
+
+    # Create a matrix indicating which markers fall in what bin
+    bin_matrix, linear_unique_bin_ids = attribute_matrix(linear_ind)
+
+
+    bin_matrix = bin_matrix.T
+    sub_unique_bin_ids = np.unravel_index(linear_unique_bin_ids, size)
+
+    offset = mi.flatten()
+    xy_bin = np.vstack(tuple( sub_unique_bin_ids[i] * bin_width + offset[i] for i in range(2))).T
+
+    bin_matrix = bin_matrix.astype('float32').tocsr()
+    if return_grid_props:
+        grid_props = dict(
+            non_empty_bins=linear_unique_bin_ids,
+            grid_coords=sub_unique_bin_ids,
+            grid_size=size,
+            grid_offset=mi.flatten(),
+            grid_scale=1.0/bin_width
+        )
+        return bin_matrix, xy_bin, grid_props
+    return bin_matrix, xy_bin
+
+
+
+def create_neighbors_matrix(grid_size, non_empty_indices):
+    # Total number of grid points
+    n_grid_pts = grid_size[0] * grid_size[1]
+
+    # Create 2D arrays of row and column indices for all grid points
+    rows, cols = np.indices(grid_size)
+    linear_indices = rows * grid_size[1] + cols
+
+    # Convert linear indices of non-empty grid points to subindices
+    non_empty_subindices = np.unravel_index(non_empty_indices, grid_size)
+
+    # Create arrays representing potential neighbors in four directions
+    neighbors_i = np.array([0, 0, -1, 1, 0])
+    neighbors_j = np.array([-1, 1, 0, 0, 0])
+
+    # Compute potential neighbors for all non-empty grid points
+    neighbor_candidates_i = non_empty_subindices[0][:, np.newaxis] + neighbors_i
+    neighbor_candidates_j = non_empty_subindices[1][:, np.newaxis] + neighbors_j
+
+
+    # Filter out neighbors that are outside the grid
+    valid_neighbors = np.where(
+        (0 <= neighbor_candidates_i) & (neighbor_candidates_i < grid_size[0]) &
+        (0 <= neighbor_candidates_j) & (neighbor_candidates_j < grid_size[1])
+    )
+
+    # Create COO format data for the sparse matrix
+    non_empty_indices = np.array(non_empty_indices)
+    data = np.ones_like(valid_neighbors[0])
+    rows = non_empty_indices[valid_neighbors[0]]
+    cols = (neighbor_candidates_i[valid_neighbors], neighbor_candidates_j[valid_neighbors])
+    cols = cols[0] * grid_size[1] + cols[1]
+
+    # Create the sparse matrix using COO format
+    neighbors = sp.csr_matrix((data, (rows, cols)), shape=(n_grid_pts, n_grid_pts), dtype=bool)
+
+    # Extract the submatrix for non-empty indices
+    neighbors = neighbors[non_empty_indices, :][:, non_empty_indices]
+
+    return neighbors
+
+
+def find_inverse_distance_weights(ij, A, B, bin_width):
+
+    # Create sparse matrix
+    num_pts = A.shape[0]
+    num_other_pts = B.shape[0]
+    cols, rows = ij
+
+
+    # Inverse distance weighing
+    distances = np.linalg.norm(A[rows,:]-B[cols,:], axis=1)
+    good_ind = distances <= bin_width*1.000005
+
+    vals = 1.0 / (distances+1e-5)
+    #vals = vals / vals.sum(axis=1, keepdims=True)
+    vals = vals.flatten()
+    #data = np.ones_like(rows, dtype=float)
+    vals = vals[good_ind]
+    rows = rows[good_ind]
+    cols = cols[good_ind]
+    sparse_matrix = sp.csr_matrix((vals, (rows, cols)), shape=(num_pts, num_other_pts), dtype='float32')
+    sparse_matrix.eliminate_zeros()
+    normalize(sparse_matrix, norm='l1', copy=False)
+    return sparse_matrix
+
+
+
+def inverse_distance_interpolation(
+    xy:np.ndarray,
+    labels:np.ndarray,
+    unique_labels:np.ndarray,
+    pixel_width:float,
+    smooth:float,
+    min_markers_per_pixel:int
+):
+    
+     
+    # Create attribute matrix (nobs x n_unique_labels)
+    attributes, _ = attribute_matrix(labels, unique_labels)
+
+    # Number of resolution levels.
+    num_levels = 4
+    pixel_widths = np.linspace(pixel_width, pixel_width*smooth, num_levels)
+
+    # B maps each gene to a pixel of the highest resolution (smallest pixel width)
+    B, xy, grid_props = spatial_binning_matrix(xy, bin_width=pixel_width, return_grid_props=True)
+
+    # Compute features (frequency of each label in each pixel)
+    features = B.dot(attributes)
+
+    # Compute center of each pixel
+    bin_center_xy = xy + 0.5 * pixel_width
+
+    # Compute lower resolution pixels
+    # as well as weightes between neighboring bins
+    Ws, Bs = [], []
+    density = features.sum(axis=1) 
+    X = density.copy()
+    
+    for level in range(1, num_levels):
+
+        Bi, xyi, props = spatial_binning_matrix(xy, bin_width=pixel_widths[level], return_grid_props=True)
+        N = create_neighbors_matrix(props['grid_size'], props['non_empty_bins'])
+        # Find a 4-connectivity graph that connects adjacent non-empty bins
+
+        # Find which high-resolution pixels are connected to
+        # what low-resolution pixel.
+        neighbors = N.dot(Bi).nonzero()
+        # Neighbors is of shape 2 x n
+        # where the first row are indices to low-resolution pixels
+        # and the second row are indices to high-resolution pixels
+
+        # Find weights between the low and high resolution pixels
+        low_res_pixel_center_xy = xyi + 0.5 * pixel_widths[level]
+
+        W = find_inverse_distance_weights(
+            neighbors, 
+            bin_center_xy, 
+            low_res_pixel_center_xy,
+            pixel_widths[level]
+        )
+
+        # Append matrices for later use
+        Ws.append(W)
+        Bs.append(Bi)
+
+        # Compute density
+        density += W.dot(Bi.dot(X))
+
+    # Remove bins with low density
+    passed_threshold = density/num_levels >= min_markers_per_pixel
+    features = features.multiply(passed_threshold)
+    features.eliminate_zeros()
+
+    # Compute features by aggregating different resolutions
+    X = features.copy()
+
+    for Wi, Bi in zip(Ws, Bs):
+        features +=  Wi.dot(Bi.dot(X))
+
+    # Prepare outputs
+    # Convert to numpy array
+    passed_threshold = passed_threshold.A.flatten()
+
+    # Log data
+    features.data = np.log1p(features.data)
+
+    # Normalizing factor each bin
+    s = features.sum(axis=1)
+
+    # Normalize
+    norms_r = 1.0 / (s + 1e-5)
+    norms_r[np.isinf(norms_r)] = .0
+    features = features.multiply(norms_r).tocsr()
+
+    return dict(
+        # Features (num_high_res_pixels x n_unique_markers)
+        features=features,
+
+        # Position of each pixel
+	    xy_pixel=xy,
+
+        # Normalizing factor for each pixel
+        norms=norms_r.A.flatten(),
+
+        # Dictionary with grid properties. 
+        # Such as the shape of the grid
+        grid_props=grid_props,
+
+        # Whether a pixel (bin) passed the
+        # density threshold
+        passed_threshold=passed_threshold,
+
+        # Sequence of indicies of length
+        # nobs that indicates which high-res
+        # pixel each observed marker belongs to.
+        pix2marker_ind=B.T.nonzero()[1]
+    )
+
+
+
+import numpy as np
+from skimage.measure import approximate_polygon, find_contours
+from scipy.ndimage import zoom
+
+COLORS = [
+    [0.9019607843137255, 0.09803921568627451, 0.29411764705882354],
+    [0.23529411764705882, 0.7058823529411765, 0.29411764705882354],
+    [1.0, 0.8823529411764706, 0.09803921568627451],
+    [0.2627450980392157, 0.38823529411764707, 0.8470588235294118],
+    [0.9607843137254902, 0.5098039215686274, 0.19215686274509805],
+    [0.5686274509803921, 0.11764705882352941, 0.7058823529411765],
+    [0.27450980392156865, 0.9411764705882353, 0.9411764705882353],
+    [0.9411764705882353, 0.19607843137254902, 0.9019607843137255],
+    [0.7372549019607844, 0.9647058823529412, 0.047058823529411764],
+    [0.9803921568627451, 0.7450980392156863, 0.7450980392156863],
+    [0.0, 0.5019607843137255, 0.5019607843137255],
+    [0.9019607843137255, 0.7450980392156863, 1.0],
+    [0.6039215686274509, 0.38823529411764707, 0.1411764705882353],
+    [1.0, 0.9803921568627451, 0.7843137254901961],
+    [0.5019607843137255, 0.0, 0.0],
+    [0.6666666666666666, 1.0, 0.7647058823529411],
+    [0.5019607843137255, 0.5019607843137255, 0.0],
+    [1.0, 0.8470588235294118, 0.6941176470588235],
+    [0.0, 0.0, 0.4588235294117647],
+    [0.5019607843137255, 0.5019607843137255, 0.5019607843137255],
+    [1.0, 1.0, 1.0],
+    [0.0, 0.0, 0.0],
+]
+
+COLORS = [[int(255 * v) for v in RGB] for RGB in COLORS]
+
+
+
+def polygons2json(polygons, cluster_class, cluster_names, colors=None):
+    jsonROIs = []
+    for i, polygon in enumerate(polygons):
+        name = cluster_names[i]
+        jsonROIs.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "MultiPolygon", "coordinates": []},
+                "properties": {
+                    "name": name,
+                    "classification": {"name": cluster_class},
+                    "color": colors[i] if colors is not None else [255, 0, 0],
+                    "isLocked": False,
+                },
+            }
+        )
+        jsonROIs[-1]["geometry"]["coordinates"].append(polygon)
+    return jsonROIs
+
+
+def binarymask2polygon(binary_mask: np.ndarray, tolerance: float=0, offset: float=None, scale: float=None):
+    """Converts a binary mask to COCO polygon representation
+    Args:
+        binary_mask: a 2D binary numpy array where '1's represent the object
+        tolerance: Maximum distance from original points of polygon to approximated
+            polygonal chain. If tolerance is 0, the original coordinate array is returned.
+    """
+
+    polygons = []
+    # pad mask to close contours of shapes which start and end at an edge
+    binary_mask = zoom(binary_mask, 3, order=0, grid_mode=True)
+    padded_binary_mask = np.pad(
+        binary_mask, pad_width=1, mode="constant", constant_values=0
+    )
+    contours = find_contours(padded_binary_mask, 0.5)
+    contours = [c-1 for c in contours]
+    #contours = np.subtract(contours, 1)
+    for contour in contours:
+        contour = approximate_polygon(contour, tolerance)
+        if len(contour) < 3:
+            continue
+        contour = contour / 3
+        contour = np.rint(contour)
+        if scale is not None:
+            contour = contour * scale
+        if offset is not None:
+            contour = contour + offset  # .ravel().tolist()
+
+        # after padding and subtracting 1 we may get -0.5 points in our segmentation
+        polygons.append(contour.tolist())
+
+    return polygons
+
+
+
+def labelmask2geojson(
+    labelmask: np.ndarray,
+    region_name:str="My regions",
+    scale:float=1.0,
+    offset:float = 0,
+    colors=None
+):
+    from skimage.measure import regionprops
+
+    nclusters = np.max(labelmask)
+    if colors is None:
+        colors = [COLORS[k % len(COLORS)] for k in range(nclusters)]
+    if isinstance(colors, np.ndarray):
+        colors = np.round(colors*255).astype('uint8')
+        colors = colors.tolist()
+    # Make JSON
+    polygons = []
+    cluster_names = [f"Region {l}" for l in np.arange(nclusters)]
+    props = regionprops(labelmask+1)
+    cc = []
+    for index, region in enumerate(props):
+        # take regions with large enough areas
+        contours = binarymask2polygon(
+            region.image,
+            offset=scale*np.array(region.bbox[0:2]) + offset,
+            scale=scale
+        )
+        cc.append(colors[region.label-1])
+        polygons.append(contours)
+    json = polygons2json(polygons, region_name, cluster_names, colors=cc)
+    return json
+
+
+
 from typing import Optional, Any, Dict, List, Union, Tuple, Literal
 from typing_extensions import Self
 import numpy as np
@@ -10,8 +440,8 @@ from scipy.spatial import cKDTree as KDTree
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.ndimage import distance_transform_edt as edt, binary_erosion
 
-from .geojson import labelmask2geojson
-from .utils import inverse_distance_interpolation, attribute_matrix
+
+
 
 
 def _compute_cluster_center(cluster_labels, features):
@@ -33,7 +463,7 @@ def _rgb_to_hex(rgb):
     return hex_color
 
 
-class Points2Regions:
+class Points2RegionClass:
     """
     Points2Regions is a tool for clustering and defining regions based on categorical 
     marker data, which are commonly encountered in spatial biology.
