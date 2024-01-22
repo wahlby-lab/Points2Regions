@@ -1,5 +1,4 @@
 from typing import Optional, Any, Dict, List, Union, Tuple, Literal
-from typing_extensions import Self
 import numpy as np
 import scipy.sparse as sp
 from sklearn.cluster import MiniBatchKMeans as KMeans
@@ -83,7 +82,7 @@ class Points2Regions:
         self._extract_features(xy, labels, pixel_width, pixel_smoothing, min_num_pts_per_pixel, datasetids)
 
 
-    def fit(self, num_clusters:int, seed:int=42) -> Self:
+    def fit(self, num_clusters:int, seed:int=42):
         """
         Fit the clustering model on the extracted features.
 
@@ -261,7 +260,7 @@ class Points2Regions:
             raise ValueError(f'Invalid value for `output` {output}. Must be one of the following: {valid_inputs}.')
 
 
-    def _extract_features(self, xy:np.ndarray, labels:np.ndarray, pixel_width:float, pixel_smoothing:float, min_num_pts_per_pixel:float=0.0, datasetids:Optional[np.ndarray]=None) -> Self:
+    def _extract_features(self, xy:np.ndarray, labels:np.ndarray, pixel_width:float, pixel_smoothing:float, min_num_pts_per_pixel:float=0.0, datasetids:Optional[np.ndarray]=None):
         """
         Extracts features from input data.
 
@@ -329,7 +328,7 @@ class Points2Regions:
         return self
 
 
-    def cluster(self, num_clusters:int, seed:int=42) -> Self:
+    def cluster(self, num_clusters:int, seed:int=42):
         """
         Performs clustering on the extracted features.
         The method `extract_feature` must be called
