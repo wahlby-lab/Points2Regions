@@ -7,7 +7,7 @@ Points2Regions is a Python tool designed for clustering and defining regions bas
 You can install Points2Regions using the following command:
 
 ```bash
-pip install LINK_TO_GITHUB
+pip install git+https://github.com/wahlby-lab/Points2Regions
 ```
 
 ## Usage
@@ -17,7 +17,7 @@ from points2regions import Points2Regions
 import pandas as pd
 
 # Example usage with a CSV file
-data = pd.read_csv('your_data.csv')
+data = pd.read_csv('https://tissuumaps.dckube.scilifelab.se/private/Points2Regions/toy_data.csv')
 
 # Create the clustering model
 p2r = Points2Regions(
