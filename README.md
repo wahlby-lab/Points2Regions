@@ -10,6 +10,8 @@ You can install Points2Regions using the following command:
 pip install git+https://github.com/wahlby-lab/Points2Regions
 ```
 
+
+
 ## Usage
 
 ```python
@@ -34,10 +36,10 @@ p2r.fit(num_clusters=15)
 cluster_per_marker = p2r.predict(output='marker')
 
 # Get a label mask
-label_mask, _ = p2r.predict(output='pixel')
+label_mask, tform = p2r.predict(output='pixel')
 
 # Get connected components
-_, _, connected_components, num_components = p2r.predict(output='component')
+connected_components, num_components, label_mask, tform  = p2r.predict(output='connected')
 ```
 
 ## Example

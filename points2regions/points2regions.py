@@ -38,14 +38,6 @@ class Points2Regions:
     marker data, which are commonly encountered in spatial biology.
     
     
-    Methods:
-        extract_features: Extracts features from input data.
-        cluster: Performs clustering on the extracted features.
-        get_cluster_colors: Retrieves cluster colors.
-        get_labelmask: Generates label mask.
-        get_anndata: Creates an AnnData object.
-        get_geojson: Generates GeoJSON representation.
-        get_clusters_per_marker: Retrieves clusters per marker.
     """
 
     def __init__(self, xy:np.ndarray, labels:np.ndarray, pixel_width:float, pixel_smoothing:float, min_num_pts_per_pixel:float=0.0, datasetids:Optional[np.ndarray]=None):
@@ -92,173 +84,154 @@ class Points2Regions:
             Number of clusters to form.
         seed : int
             Seed for random initialization.
-
-        Returns
-        -------
-        Points2Regions
-            Updated instance of the Points2Regions class.
         """
                 
-        self.cluster(num_clusters, seed)
+        self._cluster(num_clusters, seed)
         return self
 
-    def fit_predict(self, num_clusters:int, output: Literal['marker', 'pixel', 'anndata','geojson', 'colors', 'connected'], seed:int=42, adata_cluster_key:str='Clusters', grow:Optional[int]=None, min_area:int=1) -> Any:
-        """
-        Fit the clustering model and predict the output based on the specified format.
 
-        Parameters
-            ----------
-            num_clusters : int
-                Number of clusters to form.
-            output : Literal['marker', 'pixel', 'anndata','geojson', 'colors']
-                
-                Output format to predict where:
-                    * marker -> np.ndarray 
-                        Returns the cluster label for each marker as an ndarray.
-                        Clusters equal to -1 correspond to background.
-                    
-                    * pixel -> Tuple(np.ndarray, np.ndarray)
-                        Returns a label mask of size `height` times `width`
-                        where each pixel is labelled by a cluster.
-                        Also returns the parameters, T, such that
-                        input markers, `xy`, are mapped onto the label mask
-                        via `T[0] * xy + T[1]`.
-
-                        The parameter `grow` can be set to an integer value
-                        for growing the label mask's foreground pixels.
-                        
-                    * anndata -> AnnData
-                        Returns an AnnData object with:
-                            - Marker-count vectors stored in `adata.X`.
-                            - Clusters stored in `adata.obs[adata_cluster_key]`.
-                            - Position of each pixel stored in `adata.obsm["spatial"]`.
-                            - Marker position and cluster per marker stored in `adata.uns`.
-
-                    * geojson -> Dict | List:
-                        Returns a dictionary or list with geojson polygons
-
-                    * colors : np.ndarray
-                        An ndarray of colors (hex) for each cluster.
-                        Similar clusters will have similar colors.
-                        Last entry correspond to the background color. 
-
-                    * connected -> Tuple[np.ndarray, np.ndarray, np.ndarray]
-                        Returns connected components in the label mask.
-                        Output comes as a tuple with three values, (label_mask, tform, connected_comps, num_components),
-                        where:
-                            - `label_mask` is the label mask
-                            - `tform` contains the slope and instersect so that input markers' positions,
-                                `xy`, can be mapped onto the label mask via `tform[0] * xy + tform[1]`
-                            - `connected` is another label mask where each connected component is uniquely 
-                                labelled.
-                            - `num_components` is an integer indicating the number of unique connected
-                                components.
-                        The optional parameter, `grow`, can be used to grow the size of the label mask.
-                        The optional parameter, `min_area`, can be used to remove small connected components in the geojson polygons
-                            or in the connected component label mask. 
-                                
-    
-            seed : int, optional
-                Random seed for clustering.
-            adata_cluster_key : str, optional
-                Key indicating which column to store the cluster ids in an AnnData object (default: 'Clusters').
-            grow : Optional[int], optional
-                If provided, the number of pixels to grow the foreground regions in the label mask.
-
-            Returns
-            -------
-            Result based on the specified output format.
-            """
-        self.fit(num_clusters, seed)
-        return self.predict(output, adata_cluster_key, grow, min_area)
 
     def predict(self, output: Literal['marker', 'pixel', 'anndata','geojson', 'colors', 'connected'], adata_cluster_key:str='Clusters', grow:Optional[int]=None, min_area:int=1) -> Any:
         """
-        Predict the output based on the specified format after fitting the clustering model.
+        Fit and predict the output based on the specified format after fitting the clustering model.
 
         Parameters
         ----------
         num_clusters : int
             Number of clusters to form.
-        output : Literal['marker', 'pixel', 'anndata','geojson', 'colors']
+
+        output : Literal['marker', 'pixel', 'anndata','geojson', 'colors'] specifying the output format, where
+
+            * marker : np.ndarray 
+                - Returns the cluster label for each marker as an ndarray. Clusters equal to -1 correspond to background.
             
-            Output format to predict where:
-                * marker -> np.ndarray 
-                    Returns the cluster label for each marker as an ndarray.
-                    Clusters equal to -1 correspond to background.
+            * pixel : Tuple(np.ndarray, np.ndarray)
+                - Returns a label mask of size `height` times `width` where each pixel is labelled by a cluster.
+                - Also returns the parameters, `T`, such that input markers, `xy`, are mapped onto the label mask via `T[0] * xy + T[1]`.
+                - The optional parameter `grow` can be set to an integer value for growing the label mask's foreground pixels.
+            
+            * anndata : AnnData, returns an AnnData object with:
+                - Marker-count vectors stored in `adata.X`.
+                - Clusters stored in `adata.obs[adata_cluster_key]`.
+                - Position of each pixel stored in `adata.obsm["spatial"]`.
+                - Marker position and cluster per marker stored in `adata.uns`.
                 
-                * pixel -> Tuple(np.ndarray, np.ndarray)
-                    Returns a label mask of size `height` times `width`
-                    where each pixel is labelled by a cluster.
-                    Also returns the parameters, T, such that
-                    input markers, `xy`, are mapped onto the label mask
-                    via `T[0] * xy + T[1]`.
+                Requires that the package `anndata` is installed.
 
-                    The parameter `grow` can be set to an integer value
-                    for growing the label mask's foreground pixels.
-                    
-                * anndata -> AnnData
-                    Returns an AnnData object with:
-                        - Marker-count vectors stored in `adata.X`.
-                        - Clusters stored in `adata.obs[adata_cluster_key]`.
-                        - Position of each pixel stored in `adata.obsm["spatial"]`.
-                        - Marker position and cluster per marker stored in `adata.uns`.
+            * geojson : Dict | List:
+                - Returns a dictionary or list with geojson polygons
 
-                * geojson -> Dict | List:
-                    Returns a dictionary or list with geojson polygons
+            * colors : np.ndarray
+                - An ndarray of colors (hex) for each cluster. Similar clusters will have similar colors. Last entry correspond to the background color. 
 
-                * colors : np.ndarray
-                    An ndarray of colors (hex) for each cluster.
-                    Similar clusters will have similar colors.
-                    Last entry correspond to the background color. 
-
-                * connected -> Tuple[np.ndarray, np.ndarray, np.ndarray]
-                    Returns connected components in the label mask.
-                    Output comes as a tuple with three values, (label_mask, tform, connected_comps, num_components),
-                    where:
-                        - `label_mask` is the label mask
-                        - `tform` contains the slope and instersect so that input markers' positions,
-                            `xy`, can be mapped onto the label mask via `tform[0] * xy + tform[1]`
-                        - `connected` is another label mask where each connected component is uniquely 
-                            labelled.
-                        - `num_components` is an integer indicating the number of unique connected
-                            components.
-                    The optional parameter, `grow`, can be used to grow the size of the label mask.
-                    The optional parameter, `min_area`, can be used to remove small connected components in the geojson polygons
-                        or in the connected component label mask. 
-                                                        
- 
+            * connected : Tuple[np.ndarray, int, np.ndarray, np.ndarray], returns connected components in the label mask.
+                Output comes as a tuple with four values:
+                    - `connected` is a label mask where each connected component is uniquely labelled.
+                    - `num_components` is an integer indicating the number of unique connected components.
+                    - `label_mask` is the label mask
+                    - `tform` contains the slope and instersect so that input markers' positions, `xy`, can be mapped onto the label mask via `tform[0] * xy + tform[1]`
+                The optional parameter, `grow`, can be used to grow the size of the label mask.
+                The optional parameter, `min_area`, can be used to remove small connected components in the geojson polygons
+                    or in the connected component label mask. 
+        
         seed : int, optional
             Random seed for clustering.
+
         adata_cluster_key : str, optional
             Key indicating which column to store the cluster ids in an AnnData object (default: 'Clusters').
+        
         grow : Optional[int], optional
             If provided, the number of pixels to grow the foreground regions in the label mask.
-
+                                                
         Returns
         -------
-        Result based on the specified output format.
+        Points2Regions
+            Updated instance of the Points2Regions class.
+
         """
+
+
 
         if not self._is_clustered:
             raise ValueError('Must run the method `.fit(...)` before `.predict(...)`, or use `.fit_predict(...)`')
         if output == 'marker':
-            return self.get_clusters_per_marker()
+            return self._get_clusters_per_marker()
         elif output == 'pixel':
-            return self.get_labelmask(grow=grow)
+            return self._get_labelmask(grow=grow)
         elif output == 'anndata':
-            return self.get_anndata(cluster_key_added=adata_cluster_key)
+            return self._get_anndata(cluster_key_added=adata_cluster_key)
         elif output == 'geojson':
-            return self.get_geojson(grow=grow, min_area=min_area)
+            return self._get_geojson(grow=grow, min_area=min_area)
         elif output == 'colors':
-            return self.get_cluster_colors(hex=True)
+            return self._get_cluster_colors(hex=True)
         elif output == 'connected':
-            label_mask_args = self.get_labelmask(grow=grow)
+            label_mask_args = self._get_labelmask(grow=grow)
             return self._get_connected_components(label_mask_args, min_area=min_area)
         else:
             valid_inputs = {'marker', 'pixel', 'anndata','geojson', 'colors', 'connected'}
             raise ValueError(f'Invalid value for `output` {output}. Must be one of the following: {valid_inputs}.')
+    
+    def fit_predict(self, num_clusters:int, output: Literal['marker', 'pixel', 'anndata','geojson', 'colors', 'connected'], seed:int=42, adata_cluster_key:str='Clusters', grow:Optional[int]=None, min_area:int=1) -> Any:
+        """
+        Fit and predict the output based on the specified format after fitting the clustering model.
 
+        Parameters
+        ----------
+        num_clusters : int
+            Number of clusters to form.
+
+        output : Literal['marker', 'pixel', 'anndata','geojson', 'colors'] specifying the output format, where
+
+            * marker : np.ndarray 
+                - Returns the cluster label for each marker as an ndarray. Clusters equal to -1 correspond to background.
+            
+            * pixel : Tuple(np.ndarray, np.ndarray)
+                - Returns a label mask of size `height` times `width` where each pixel is labelled by a cluster.
+                - Also returns the parameters, `T`, such that input markers, `xy`, are mapped onto the label mask via `T[0] * xy + T[1]`.
+                - The optional parameter `grow` can be set to an integer value for growing the label mask's foreground pixels.
+            
+            * anndata : AnnData, returns an AnnData object with:
+                - Marker-count vectors stored in `adata.X`.
+                - Clusters stored in `adata.obs[adata_cluster_key]`.
+                - Position of each pixel stored in `adata.obsm["spatial"]`.
+                - Marker position and cluster per marker stored in `adata.uns`.
+                
+                Requires that the package `anndata` is installed.
+
+            * geojson : Dict | List:
+                - Returns a dictionary or list with geojson polygons
+
+            * colors : np.ndarray
+                - An ndarray of colors (hex) for each cluster. Similar clusters will have similar colors. Last entry correspond to the background color. 
+
+            * connected : Tuple[np.ndarray, int, np.ndarray, np.ndarray], returns connected components in the label mask.
+                Output comes as a tuple with four values:
+                    - `connected` is a label mask where each connected component is uniquely labelled.
+                    - `num_components` is an integer indicating the number of unique connected components.
+                    - `label_mask` is the label mask
+                    - `tform` contains the slope and instersect so that input markers' positions, `xy`, can be mapped onto the label mask via `tform[0] * xy + tform[1]`
+                The optional parameter, `grow`, can be used to grow the size of the label mask.
+                The optional parameter, `min_area`, can be used to remove small connected components in the geojson polygons
+                    or in the connected component label mask. 
+        
+        seed : int, optional
+            Random seed for clustering.
+
+        adata_cluster_key : str, optional
+            Key indicating which column to store the cluster ids in an AnnData object (default: 'Clusters').
+        
+        grow : Optional[int], optional
+            If provided, the number of pixels to grow the foreground regions in the label mask.
+                                                
+        Returns
+        -------
+        Points2Regions
+            Updated instance of the Points2Regions class.
+
+        """
+       
+        self.fit(num_clusters, seed)
+        return self.predict(output, adata_cluster_key, grow, min_area)
 
     def _extract_features(self, xy:np.ndarray, labels:np.ndarray, pixel_width:float, pixel_smoothing:float, min_num_pts_per_pixel:float=0.0, datasetids:Optional[np.ndarray]=None):
         """
@@ -328,7 +301,7 @@ class Points2Regions:
         return self
 
 
-    def cluster(self, num_clusters:int, seed:int=42):
+    def _cluster(self, num_clusters:int, seed:int=42):
         """
         Performs clustering on the extracted features.
         The method `extract_feature` must be called
@@ -406,7 +379,7 @@ class Points2Regions:
 
 
 
-    def get_cluster_colors(self, hex:bool=False) -> np.ndarray:
+    def _get_cluster_colors(self, hex:bool=False) -> np.ndarray:
         """
         Retrieves cluster colors.
 
@@ -460,7 +433,7 @@ class Points2Regions:
         self._colors = lab2rgb(colors)
         self._colors = np.vstack((self._colors, np.zeros(3)))
 
-    def get_labelmask(self, grow:Optional[float]=None) -> np.ndarray:
+    def _get_labelmask(self, grow:Optional[float]=None) -> np.ndarray:
         """
         Generates label mask.
 
@@ -524,7 +497,7 @@ class Points2Regions:
       
 
 
-    def get_anndata(self, cluster_key_added:str='Clusters') -> Any:
+    def _get_anndata(self, cluster_key_added:str='Clusters') -> Any:
         """
         Creates an AnnData object.
 
@@ -590,12 +563,32 @@ class Points2Regions:
                 .obs['datasetid']\
                 .astype('category')
 
+
+
+        marker2pix_ind = []
+        offset = 0
+        for r in self._results.values():
+            # Get indices of non empty bins
+            non_empty = np.where(r['passed_threshold'])[0]
+
+            # Remap each point in the dataset
+            remap = {i : -1 for i in range(len(r['cluster_per_marker']))}
+            for new, old in enumerate(non_empty):
+                remap[old] = new + offset
+            marker2pix_ind.append([remap[i] for i in r['pix2marker_ind']])
+            offset += len(non_empty)
+            
+        marker2pix_ind = np.hstack(marker2pix_ind)
+
+        
         # Create reads dataframe
         reads = {}
         reads['x'] = self._xy[:,0]
         reads['y'] = self._xy[:,1]
         reads['labels'] = self._labels
-        reads[cluster_key_added] = self.get_clusters_per_marker()
+        reads[cluster_key_added] = self._get_clusters_per_marker()
+        reads['pixel_ind'] = marker2pix_ind
+        
 
         if self._datasetids is not None:
             reads['datasetid'] = self._datasetids
@@ -613,7 +606,7 @@ class Points2Regions:
         adata.uns['reads'] = reads
         return adata
 
-    def get_geojson(self, grow:int=None, min_area:int=0) -> Union[Dict, List]:
+    def _get_geojson(self, grow:int=None, min_area:int=0) -> Union[Dict, List]:
         """
         Generates GeoJSON representation of the regions.
 
@@ -633,16 +626,16 @@ class Points2Regions:
 
         # Get label mask and transformations
         if len(self._results) == 1:
-            label_mask, tform = self.get_labelmask(grow=grow)
+            label_mask, tform = self._get_labelmask(grow=grow)
             geojson = labelmask2geojson(label_mask, scale=1.0 / tform[0], offset=-tform[1]/tform[0], min_area=min_area)
         else:
             geojson = {}
-            for datasetid, (label_mask, tform) in self.get_labelmask(grow=grow):
+            for datasetid, (label_mask, tform) in self._get_labelmask(grow=grow):
                 geojson[datasetid] = labelmask2geojson(label_mask, scale=1.0 / tform[0], offset=-tform[1]/tform[0], min_area=min_area)
 
         return geojson
 
-    def get_clusters_per_marker(self) -> np.ndarray:
+    def _get_clusters_per_marker(self) -> np.ndarray:
         """
         Retrieves clusters per marker.
 
@@ -669,6 +662,7 @@ class Points2Regions:
     def _get_connected_components(self, label_mask_result: Union[Dict[str, Tuple[np.ndarray, np.ndarray]], Tuple[np.ndarray, np.ndarray]], min_area:int=1) -> Tuple[np.ndarray, int]:
         """
         Get connected components in the label mask.
+        This can be slow for high-resolution masks,
 
         Parameters
         ----------
@@ -679,8 +673,10 @@ class Points2Regions:
 
         Returns
         -------
-        Tuple[np.ndarray, int]
-            Labels of connected components and the number of components.
+        Tuple[np.ndarray, int, np.ndarray, Tuple[float,float]]
+            Labels of connected components, the number of components, the label mask
+            and a tuple of transformation parameters that can be used to map each 
+            observed point onto the masks via `tform[0]*xy+tform[1]`
         """
 
 
@@ -761,7 +757,7 @@ class Points2Regions:
             # Reshape to a grid
             labels = labels.reshape(label_mask.shape)
 
-            output[datasetid] = (label_mask, tform, labels, num_large_components)
+            output[datasetid] = (labels, num_large_components, label_mask, tform)
 
         if len(output) == 1:
             return output[datasetid]
