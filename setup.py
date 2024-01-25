@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='Points2Regions',
+    name='points2regions',
     version='0.1.0',
     packages=find_packages(exclude=["tests*", "example*", "tissuumaps"]),
     description='A simple and efficient clustering tool for spatial 2D points with categorical labels.',
