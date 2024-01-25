@@ -7,7 +7,7 @@ Points2Regions is a Python tool designed for clustering and defining regions bas
 You can install Points2Regions using the following command:
 
 ```bash
-pip install git+https://github.com/wahlby-lab/Points2Regions
+pip install points2regions
 ```
 
 
