@@ -1,1 +1,3 @@
-from .points2regions import Points2Regions
+from ._points2regions import Points2Regions
+
+__all__ = ["Points2Regions"]
