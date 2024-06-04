@@ -71,6 +71,7 @@ class Points2Regions:
         self._num_points = None
         self._cluster_centers = None
         self._is_clustered = False
+        self.inertia = None
         self._extract_features(xy, labels, pixel_width, pixel_smoothing, min_num_pts_per_pixel, datasetids)
 
 
@@ -338,9 +339,10 @@ class Points2Regions:
 
         # Run K-Means
         n_kmeans_clusters = int(1.75 * num_clusters)
-        kmeans = KMeans(n_clusters=n_kmeans_clusters, n_init='auto', random_state=seed, max_iter=100, batch_size=256, max_no_improvement=10, init_size=100, reassignment_ratio=0.05)
+        kmeans = KMeans(n_clusters=n_kmeans_clusters, n_init='auto', random_state=seed, max_iter=100, batch_size=256, max_no_improvement=10, init_size=100, reassignment_ratio=0.005)
         kmeans = kmeans.fit(self.X_train)
-       
+        self.inertia = kmeans.inertia_
+
         # Merge clusters using agglomerative clustering
         clusters = _merge_clusters(kmeans, num_clusters)
 
@@ -518,7 +520,7 @@ class Points2Regions:
         # Create an adata object
         import anndata
         import pandas as pd
-
+        print('Creating anndata')
         # Get position of bins for each group (library id)
         xy_pixel = np.vstack([
             r['xy_pixel'][r['passed_threshold']] for r in self._results.values()
@@ -527,12 +529,12 @@ class Points2Regions:
         # Get labels of bins for each group (library id)
         labels_pixel = np.hstack([
             r['cluster_per_pixel'][r['passed_threshold']] for r in self._results.values()
-        ])
+        ]).astype(str)
 
         obs = {}
         obs[cluster_key_added] = labels_pixel
         if len(self._results) > 1:
-            obs['datasetid'] =  np.hstack([[id]*len(r['cluster_per_pixel']) for id, r in self._results.items()])
+            obs['datasetid'] =  np.hstack([[id]*len(r['cluster_per_pixel'][r['passed_threshold']]) for id, r in self._results.items()])
 
         # Multiply back features with the norm
         norms = 1.0 / np.hstack([r['norms'][r['passed_threshold']] for r in self._results.values()])
@@ -550,9 +552,11 @@ class Points2Regions:
         adata = anndata.AnnData(
             X=X,
             obs=obs,
-            obsm=dict(spatial=xy_pixel),
-            var=pd.DataFrame(index=self._unique_labels)
+            obsm=dict(spatial=xy_pixel)
         )
+
+        adata.var_names = self._unique_labels
+        adata.obs['datasetid'] = adata.obs['datasetid'].astype('int') 
 
         adata.obs[cluster_key_added] = adata\
             .obs[cluster_key_added]\
@@ -592,6 +596,7 @@ class Points2Regions:
 
         if self._datasetids is not None:
             reads['datasetid'] = self._datasetids
+            reads['datasetid'] = reads['datasetid'].astype('int') 
 
         # Create the dataframe
         reads = pd.DataFrame(reads)
