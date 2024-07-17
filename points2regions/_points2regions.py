@@ -69,13 +69,13 @@ class Points2Regions:
         self._labels = None
         self._colors = None
         self._num_points = None
-        self._cluster_centers = None
+        self.cluster_centers = None
         self._is_clustered = False
         self.inertia = None
         self._extract_features(xy, labels, pixel_width, pixel_smoothing, min_num_pts_per_pixel, datasetids)
 
 
-    def fit(self, num_clusters:int, seed:int=42):
+    def fit(self, num_clusters:int, kmeans_kwargs:Optional[Dict[str,Any]]=None, seed:int=42):
         """
         Fit the clustering model on the extracted features.
 
@@ -85,9 +85,12 @@ class Points2Regions:
             Number of clusters to form.
         seed : int
             Seed for random initialization.
+        kmeans_kwargs : dict, optional
+            Dictionary with keyword arguments to be passed to 
+            scikit-learn's MiniBatchKMeans constructor. 
         """
                 
-        self._cluster(num_clusters, seed)
+        self._cluster(num_clusters, seed, kmeans_kwargs)
         return self
 
 
@@ -172,7 +175,7 @@ class Points2Regions:
             valid_inputs = {'marker', 'pixel', 'anndata','geojson', 'colors', 'connected'}
             raise ValueError(f'Invalid value for `output` {output}. Must be one of the following: {valid_inputs}.')
     
-    def fit_predict(self, num_clusters:int, output: Literal['marker', 'pixel', 'anndata','geojson', 'colors', 'connected'], seed:int=42, adata_cluster_key:str='Clusters', grow:Optional[int]=None, min_area:int=1) -> Any:
+    def fit_predict(self, num_clusters:int, output: Literal['marker', 'pixel', 'anndata','geojson', 'colors', 'connected'], seed:int=42, kmeans_kwargs:Optional[Dict[str, Any]]=None, adata_cluster_key:str='Clusters', grow:Optional[int]=None, min_area:int=1) -> Any:
         """
         Fit and predict the output based on the specified format after fitting the clustering model.
 
@@ -218,6 +221,10 @@ class Points2Regions:
         seed : int, optional
             Random seed for clustering.
 
+        kmeans_kwargs : dict, optional
+            Dictionary with keyword arguments to be passed to 
+            scikit-learn's MiniBatchKMeans constructor. 
+
         adata_cluster_key : str, optional
             Key indicating which column to store the cluster ids in an AnnData object (default: 'Clusters').
         
@@ -231,7 +238,7 @@ class Points2Regions:
 
         """
        
-        self.fit(num_clusters, seed)
+        self.fit(num_clusters, kmeans_kwargs, seed)
         return self.predict(output, adata_cluster_key, grow, min_area)
 
     def _extract_features(self, xy:np.ndarray, labels:np.ndarray, pixel_width:float, pixel_smoothing:float, min_num_pts_per_pixel:float=0.0, datasetids:Optional[np.ndarray]=None):
@@ -295,14 +302,14 @@ class Points2Regions:
                     self._unique_labels,
                     pixel_width,
                     pixel_smoothing,
-                    min_num_pts_per_pixel,
+                    min_num_pts_per_pixel
                 )
 
             self._features_extracted = True
         return self
 
 
-    def _cluster(self, num_clusters:int, seed:int=42):
+    def _cluster(self, num_clusters:int, seed:int=42, kmeans_kwargs:Optional[Dict[str,Any]]=None):
         """
         Performs clustering on the extracted features.
         The method `extract_feature` must be called
@@ -325,6 +332,9 @@ class Points2Regions:
             Number of clusters.
         seed : int, optional
             Random seed.
+        kmeans_kwargs : dict, optional
+            Dictionary with keyword arguments to be passed to 
+            scikit-learn's MiniBatchKMeans constructor. 
 
         Returns
         -------
@@ -337,17 +347,52 @@ class Points2Regions:
             result['features'][result['passed_threshold']] for result in self._results.values()
         ])
 
-        # Run K-Means
-        n_kmeans_clusters = int(1.75 * num_clusters)
-        kmeans = KMeans(n_clusters=n_kmeans_clusters, n_init='auto', random_state=seed, max_iter=100, batch_size=256, max_no_improvement=10, init_size=100, reassignment_ratio=0.005)
+        default_kmeans_kwargs = dict(
+            init="k-means++",
+            max_iter=100,
+            batch_size=1024,
+            verbose=0,
+            compute_labels=True,
+            random_state=seed,
+            tol=0.0,
+            max_no_improvement=10,
+            init_size=None,
+            n_init="auto",
+            reassignment_ratio=0.005,
+        )
+
+        if kmeans_kwargs is not None:
+            for key,val in kmeans_kwargs.items():
+                if key in default_kmeans_kwargs:
+                    default_kmeans_kwargs[key] = val
+
+        if isinstance(default_kmeans_kwargs['init'], sp.spmatrix):
+            n_kmeans_clusters = default_kmeans_kwargs['init'].shape[0]
+            use_hierarchial = False
+        elif isinstance(default_kmeans_kwargs['init'], np.ndarray):
+            n_kmeans_clusters = default_kmeans_kwargs['init'].shape[0]
+            use_hierarchial = False
+        else:
+            n_kmeans_clusters = int(1.5 * num_clusters)
+            use_hierarchial = True
+
+        kmeans = KMeans(
+            n_kmeans_clusters,
+            **default_kmeans_kwargs
+        )
+
         kmeans = kmeans.fit(self.X_train)
         self.inertia = kmeans.inertia_
 
         # Merge clusters using agglomerative clustering
-        clusters = _merge_clusters(kmeans, num_clusters)
+        if use_hierarchial:
+            clusters = _merge_clusters(kmeans, num_clusters)
+            # Compute new cluster centers
+            _, self.cluster_centers = _compute_cluster_center(clusters, kmeans.cluster_centers_)
+        else:
+            clusters = kmeans.labels_
+            self.cluster_centers = kmeans.cluster_centers_
 
-        # Compute new cluster centers
-        _, self._cluster_centers = _compute_cluster_center(clusters, kmeans.cluster_centers_)
    
         # Iterate over datasets
         for datasetid, result_dict in self._results.items():
@@ -405,17 +450,17 @@ class Points2Regions:
 
 
         # If only one cluster, choose green
-        if len(self._cluster_centers) == 1:
+        if len(self.cluster_centers) == 1:
             self._colors = np.array([0, 1.0, 0]).reshape((1,-1))
             return
         
         # Compute distances between clusters
-        D = pairwise_distances(self._cluster_centers)
+        D = pairwise_distances(self.cluster_centers)
 
         # Map each factor to a color
         embedding = TSNE(
             n_components=2, 
-            perplexity=min(len(self._cluster_centers) - 1, 30), 
+            perplexity=min(len(self.cluster_centers) - 1, 30), 
             init='random', 
             metric='precomputed',
             random_state=1

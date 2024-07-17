@@ -119,6 +119,7 @@ def labelmask2geojson(
 
 
             polygons.append(contours)
-    json = polygons2json(polygons, region_name, cluster_names, colors=cc)
-    return json
+    features = polygons2json(polygons, region_name, cluster_names, colors=cc)
+    geojson = {"type": "FeatureCollection", "features": features}
+    return geojson
 

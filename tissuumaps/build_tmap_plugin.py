@@ -11,7 +11,7 @@ files_to_add = [
         'placeholder' : '{GEOJSON_HERE}'
     },
     {
-        'file' : '../points2regions/points2regions.py',
+        'file' : '../points2regions/_points2regions.py',
         'placeholder' : '{P2R_HERE}'
     }
 

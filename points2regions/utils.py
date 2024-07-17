@@ -227,7 +227,9 @@ def inverse_distance_interpolation(
     for level in range(1, num_levels):
 
         Bi, xyi, props = spatial_binning_matrix(xy, bin_width=pixel_widths[level], return_grid_props=True)
-        N = create_neighbors_matrix(props['grid_size'], props['non_empty_bins'])
+        
+
+        N = create_neighbors_matrix(props['grid_size'], props['non_empty_bins'])        
         # Find a 4-connectivity graph that connects adjacent non-empty bins
 
         # Find which high-resolution pixels are connected to
@@ -244,7 +246,7 @@ def inverse_distance_interpolation(
             neighbors, 
             bin_center_xy, 
             low_res_pixel_center_xy,
-            pixel_widths[level]
+            pixel_widths[level],
         )
 
         # Append matrices for later use
