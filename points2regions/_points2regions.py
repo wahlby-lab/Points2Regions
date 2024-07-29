@@ -601,7 +601,8 @@ class Points2Regions:
         )
 
         adata.var_names = self._unique_labels
-        adata.obs['datasetid'] = adata.obs['datasetid'].astype('int') 
+        if len(self._results) > 1:
+            adata.obs['datasetid'] = adata.obs['datasetid'].astype('int') 
 
         adata.obs[cluster_key_added] = adata\
             .obs[cluster_key_added]\
